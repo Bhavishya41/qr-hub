@@ -3,7 +3,7 @@ import Link from "next/link";
 export default function Home() {
   return (
     <div className="min-h-screen flex flex-col justify-center items-center bg-[var(--bg)] p-4 relative">
-      <div className="absolute top-0 left-4 font-[family-name:var(--font-bebas-neue)] text-[18px] tracking-widest h-20 w-80 text-[#000]">
+      <div className="absolute top-0 left-4 font-[family-name:var(--font-bebas-neue)] text-[18px] tracking-widest h-10 w-40 text-[#000]">
         <img src="logo.png"></img>
       </div>
       

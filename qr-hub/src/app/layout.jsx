@@ -20,7 +20,7 @@ const spaceMono = Space_Mono({
 });
 
 export const metadata = {
-  title: "QRTRANSFER",
+  title: "Zero Wire",
   description: "offline file transfer. no internet. just light.",
 };
 
