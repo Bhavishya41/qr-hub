@@ -210,17 +210,29 @@ export default function useSender() {
 
     const fileId = (Math.random() * 0xffff) | 0;
 
-    // Split into raw payload chunks
-    const payloads = [];
-    for (let offset = 0; offset < bytes.length; offset += CHUNK_SIZE) {
-      payloads.push(bytes.slice(offset, offset + CHUNK_SIZE));
-    }
-    if (payloads.length === 0) payloads.push(new Uint8Array(0));
+    // ── Chunk 0: JSON metadata (fileName + mimeType) ───────────────────────
+    const meta = JSON.stringify({
+      n: file.name || "zero-wire-file",
+      m: file.type || "application/octet-stream",
+    });
+    const metaBytes = new TextEncoder().encode(meta);
 
-    const totalChunks = payloads.length;
-    const chunks = payloads.map((payload, i) =>
-      buildChunk(fileId, i, totalChunks, payload)
-    );
+    // ── Chunks 1…N: raw file binary data ──────────────────────────────────
+    const dataPayloads = [];
+    for (let offset = 0; offset < bytes.length; offset += CHUNK_SIZE) {
+      dataPayloads.push(bytes.slice(offset, offset + CHUNK_SIZE));
+    }
+    // Edge case: empty file → one empty data chunk
+    if (dataPayloads.length === 0) dataPayloads.push(new Uint8Array(0));
+
+    const totalChunks = 1 + dataPayloads.length; // 1 meta + N data
+
+    const chunks = [
+      buildChunk(fileId, 0, totalChunks, metaBytes),           // chunk 0 = meta
+      ...dataPayloads.map((payload, i) =>
+        buildChunk(fileId, i + 1, totalChunks, payload)        // chunks 1..N = data
+      ),
+    ];
 
     // Pad to multiple of 3
     const padCount = (3 - (chunks.length % 3)) % 3;
