@@ -7,7 +7,7 @@ import jsQR from "jsqr";
 const DB_NAME = "zero-wire-db";
 const DB_VERSION = 1;
 const STORE = "transfers";
-const PROCESS_SIZE = 300;
+const PROCESS_SIZE = 600;
 const HEADER_SIZE = 7;       // FileID(2) + ChunkIndex(2) + TotalChunks(2) + Checksum(1)
 const PAD_CHUNK_INDEX = 0xffff;
 const META_CHUNK_INDEX = 0;  // Chunk 0 carries JSON metadata
@@ -32,11 +32,19 @@ function latin1ToBytes(str) {
 }
 
 // ─── Parse 7-byte binary header, validate XOR checksum ───────────────────────
-function parseHeader(dataStr) {
-  const bytes = latin1ToBytes(dataStr);
+function parseHeader(input) {
+  let bytes;
+  if (typeof input === "string") {
+    bytes = latin1ToBytes(input);
+  } else if (input instanceof Uint8Array || input instanceof Uint8ClampedArray) {
+    bytes = new Uint8Array(input);
+  } else {
+    return null;
+  }
+
   if (bytes.length < HEADER_SIZE) return null;
 
-  const view = new DataView(bytes.buffer);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const fileId      = view.getUint16(0, false);
   const chunkIndex  = view.getUint16(2, false);
   const totalChunks = view.getUint16(4, false);
@@ -135,69 +143,81 @@ export default function useReceiver() {
     }
 
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    ctx.drawImage(video, 0, 0, PROCESS_SIZE, PROCESS_SIZE);
+    
+    // Ensure canvas is correctly sized
+    if (canvas.width !== PROCESS_SIZE) {
+      canvas.width = canvas.height = PROCESS_SIZE;
+    }
+
+    // Crop center square from video to avoid aspect ratio distortion
+    const vW = video.videoWidth;
+    const vH = video.videoHeight;
+    const s = Math.min(vW, vH);
+    const sx = (vW - s) / 2;
+    const sy = (vH - s) / 2;
+
+    ctx.drawImage(video, sx, sy, s, s, 0, 0, PROCESS_SIZE, PROCESS_SIZE);
     const { data } = ctx.getImageData(0, 0, PROCESS_SIZE, PROCESS_SIZE);
 
-    const decodes = [
-      jsQR(data, PROCESS_SIZE, PROCESS_SIZE, { inversionAttempts: "dontInvert" }),
-    ];
+    const qr = jsQR(data, PROCESS_SIZE, PROCESS_SIZE, { inversionAttempts: "dontInvert" });
 
-    for (const qr of decodes) {
-      if (!qr?.data) continue;
+    if (qr) {
+      // Prioritize binaryData to avoid UTF-8 mangling of raw bytes
+      const header = parseHeader(qr.binaryData || qr.data);
+      if (header && header.chunkIndex !== PAD_CHUNK_INDEX) {
+        const { fileId, chunkIndex, totalChunks, payload } = header;
+        
+        const key = `${fileId}-${chunkIndex}`;
+        if (!seenRef.current.has(key)) {
+          seenRef.current.add(key);
 
-      const header = parseHeader(qr.data);
-      // parseHeader returns null if checksum fails — discard bad chunks
-      if (!header) continue;
+          // New file detected → reset tracking refs
+          if (!activeFileRef.current || activeFileRef.current.fileId !== fileId) {
+            seenRef.current = new Set([key]);
+            activeFileRef.current = { fileId, totalChunks };
+            fileNameRef.current  = "zero-wire-file";
+            mimeTypeRef.current  = "application/octet-stream";
+            setTotal(totalChunks);
+            setReceived(0);
+            setReceivedIndices(new Set([chunkIndex]));
+          } else {
+            setReceivedIndices(prev => {
+              const next = new Set(prev);
+              next.add(chunkIndex);
+              return next;
+            });
+          }
 
-      const { fileId, chunkIndex, totalChunks, payload } = header;
-      if (chunkIndex === PAD_CHUNK_INDEX) continue;
+          // ── Chunk 0: parse JSON metadata ──────────────────────────────────────
+          if (chunkIndex === META_CHUNK_INDEX) {
+            try {
+              const meta = JSON.parse(new TextDecoder().decode(payload));
+              if (meta.n) fileNameRef.current = meta.n;
+              if (meta.m) mimeTypeRef.current = meta.m;
+            } catch { /* malformed meta — keep defaults */ }
+          }
 
-      const key = `${fileId}-${chunkIndex}`;
-      if (seenRef.current.has(key)) continue;
-      seenRef.current.add(key);
+          // Persist to IndexedDB
+          try {
+            await db.put(STORE, { id: key, fileId, chunkIndex, totalChunks, payload });
+          } catch { /* duplicate put — safe to ignore */ }
 
-      // New file detected → reset tracking refs
-      if (!activeFileRef.current || activeFileRef.current.fileId !== fileId) {
-        seenRef.current = new Set([key]);
-        activeFileRef.current = { fileId, totalChunks };
-        fileNameRef.current  = "zero-wire-file";
-        mimeTypeRef.current  = "application/octet-stream";
-        setTotal(totalChunks);
-        setReceived(0);
-        setReceivedIndices(new Set([chunkIndex]));
-      } else {
-        setReceivedIndices(prev => {
-          const next = new Set(prev);
-          next.add(chunkIndex);
-          return next;
-        });
-      }
+          const count = seenRef.current.size;
+          setReceived(count);
+          setStatus("receiving");
 
-      // ── Chunk 0: parse JSON metadata ──────────────────────────────────────
-      if (chunkIndex === META_CHUNK_INDEX) {
-        try {
-          const meta = JSON.parse(new TextDecoder().decode(payload));
-          if (meta.n) fileNameRef.current = meta.n;
-          if (meta.m) mimeTypeRef.current = meta.m;
-        } catch { /* malformed meta — keep defaults */ }
-      }
-
-      // Persist to IndexedDB (idempotent via compound key PK)
-      try {
-        await db.put(STORE, { id: key, fileId, chunkIndex, totalChunks, payload });
-      } catch { /* duplicate put — safe to ignore */ }
-
-      const count = await db.countFromIndex(STORE, "fileId", fileId);
-      setReceived(count);
-      setStatus("receiving");
-
-      if (count >= totalChunks) {
-        // Complete — stop camera and trigger download
-        if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-        streamRef.current?.getTracks().forEach((t) => t.stop());
-        setStatus("done");
-        await downloadFile(fileId);
-        return;
+          if (count >= totalChunks) {
+            // Check if we actually have all chunks in DB (safety check)
+            const dbCount = await db.countFromIndex(STORE, "fileId", fileId);
+            if (dbCount >= totalChunks) {
+              if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+              streamRef.current?.getTracks().forEach((t) => t.stop());
+              setStatus("done");
+              await downloadFile(fileId);
+              return; // DONE - stop raf
+            }
+          }
+        }
       }
     }
 

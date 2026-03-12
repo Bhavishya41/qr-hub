@@ -5,7 +5,7 @@ import useReceiver from "@/hooks/useReceiver";
 
 const STATUS_LABELS = {
   idle:      { text: "READY TO RECEIVE",   color: "bg-white text-black" },
-  scanning:  { text: "SCANNING…",          color: "bg-[var(--accent-secondary)] text-white" },
+  scanning:  { text: "WAITING FOR SENDER", color: "bg-yellow-400 text-black animate-pulse" },
   receiving: { text: "RECEIVING DATA",     color: "bg-[var(--accent-primary)] text-white" },
   done:      { text: "✓ TRANSFER COMPLETE", color: "bg-[var(--success)] text-black" },
   error:     { text: "✗ CAMERA ERROR",     color: "bg-[var(--error)] text-white" },
@@ -28,7 +28,10 @@ export default function Receive() {
   const isActive  = status === "scanning" || status === "receiving";
   const isDone    = status === "done";
   const progress  = totalChunks > 0 ? Math.min(100, Math.round((receivedCount / totalChunks) * 100)) : 0;
-  const badge     = STATUS_LABELS[status] || STATUS_LABELS.idle;
+  
+  // Custom badge logic to distinguish between "Scanning for start" and "Actually receiving"
+  const currentStatus = (status === "scanning" && totalChunks > 0) ? "receiving" : status;
+  const badge = STATUS_LABELS[currentStatus] || STATUS_LABELS.idle;
 
   return (
     <div className="min-h-screen bg-[var(--accent-secondary)] p-4 flex flex-col justify-center items-center relative">

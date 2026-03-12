@@ -45,9 +45,11 @@ async function renderQRToCanvas(chunkBytes) {
   offscreen.width = QR_CANVAS_SIZE;
   offscreen.height = QR_CANVAS_SIZE;
 
-  const latin1String = bytesToLatin1(chunkBytes);
+  // Use explicit byte segments to ensure the library doesn't try to 
+  // re-encode our binary data as UTF-8, which would mangle values > 127.
+  const segments = [{ data: chunkBytes, mode: 'byte' }];
 
-  await QRCode.toCanvas(offscreen, latin1String, {
+  await QRCode.toCanvas(offscreen, segments, {
     errorCorrectionLevel: "L",
     margin: 1,
     width: QR_CANVAS_SIZE,
@@ -217,9 +219,15 @@ export default function useSender() {
     setIsEncoding(false);
     setProgress(100);
 
-    // Signal the useEffect to start the loop once the canvas element mounts
-    pendingStartRef.current = true;
-    // (setIsStreaming(true) will happen inside start(), called by the effect)
+    // Instead of auto-starting, draw the first frame (Metadata Chunk 0) immediately.
+    // This allows the receiver to "handshake" and identify the file before the stream begins.
+    if (canvasRef.current && bwFrames.length > 0) {
+      const canvas = canvasRef.current;
+      if (canvas.width !== QR_CANVAS_SIZE) canvas.width = QR_CANVAS_SIZE;
+      if (canvas.height !== QR_CANVAS_SIZE) canvas.height = QR_CANVAS_SIZE;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(bwFrames[0], 0, 0);
+    }
   }, [stop, start]);
 
   // ── Reset ─────────────────────────────────────────────────────────────────────

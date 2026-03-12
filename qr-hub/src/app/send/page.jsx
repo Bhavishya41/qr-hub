@@ -38,7 +38,7 @@ export default function Send() {
   const handleGenerate = async () => {
     if (!file || isEncoding) return;
     await encode(file);
-    start();
+    // Removed start(); - handshake phase now shows static QR 0 first
   };
 
   const handleToggleStream = () => {
@@ -200,7 +200,9 @@ export default function Send() {
                         : "bg-[var(--accent-primary)] text-white"
                     }`}
                   >
-                    {isStreaming ? "⏹ STOP SENDING" : "▶ RESUME SENDING"}
+                    {isStreaming 
+                      ? "⏹ STOP SENDING" 
+                      : (currentFrame === 0 ? "▶ START SENDING" : "▶ RESUME SENDING")}
                   </button>
                 )}
 
