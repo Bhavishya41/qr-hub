@@ -50,34 +50,7 @@ function parseHeader(dataStr) {
   return { fileId, chunkIndex, totalChunks, payload: bytes.slice(HEADER_SIZE) };
 }
 
-// ─── Single-pass adaptive demux → 3 B&W masks ────────────────────────────────
-function demuxFrame(rgba, w, h) {
-  const total = w * h;
-
-  // Compute mean luminance (ITU-R BT.601) for adaptive threshold
-  let lumSum = 0;
-  for (let i = 0; i < total; i++) {
-    const p = i * 4;
-    lumSum += 0.299 * rgba[p] + 0.587 * rgba[p + 1] + 0.114 * rgba[p + 2];
-  }
-  const threshold = lumSum / total;
-
-  const r = new Uint8ClampedArray(total * 4);
-  const g = new Uint8ClampedArray(total * 4);
-  const b = new Uint8ClampedArray(total * 4);
-
-  for (let i = 0; i < total; i++) {
-    const p = i * 4;
-    const rv = rgba[p]     < threshold ? 0 : 255;
-    const gv = rgba[p + 1] < threshold ? 0 : 255;
-    const bv = rgba[p + 2] < threshold ? 0 : 255;
-    r[p] = r[p+1] = r[p+2] = rv; r[p+3] = 255;
-    g[p] = g[p+1] = g[p+2] = gv; g[p+3] = 255;
-    b[p] = b[p+1] = b[p+2] = bv; b[p+3] = 255;
-  }
-
-  return { r, g, b };
-}
+ 
 
 // ─── Clear all chunks for a given fileId from IndexedDB ──────────────────────
 async function clearTransfer(db, fileId) {
@@ -103,6 +76,7 @@ export default function useReceiver() {
   const [receivedCount, setReceived] = useState(0);
   const [totalChunks, setTotal]      = useState(0);
   const [facingMode, setFacingMode]  = useState("environment");
+  const [receivedIndices, setReceivedIndices] = useState(new Set());
 
   // ── Init DB on mount ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -164,12 +138,8 @@ export default function useReceiver() {
     ctx.drawImage(video, 0, 0, PROCESS_SIZE, PROCESS_SIZE);
     const { data } = ctx.getImageData(0, 0, PROCESS_SIZE, PROCESS_SIZE);
 
-    const { r, g, b } = demuxFrame(data, PROCESS_SIZE, PROCESS_SIZE);
-
     const decodes = [
-      jsQR(r, PROCESS_SIZE, PROCESS_SIZE, { inversionAttempts: "dontInvert" }),
-      jsQR(g, PROCESS_SIZE, PROCESS_SIZE, { inversionAttempts: "dontInvert" }),
-      jsQR(b, PROCESS_SIZE, PROCESS_SIZE, { inversionAttempts: "dontInvert" }),
+      jsQR(data, PROCESS_SIZE, PROCESS_SIZE, { inversionAttempts: "dontInvert" }),
     ];
 
     for (const qr of decodes) {
@@ -194,6 +164,13 @@ export default function useReceiver() {
         mimeTypeRef.current  = "application/octet-stream";
         setTotal(totalChunks);
         setReceived(0);
+        setReceivedIndices(new Set([chunkIndex]));
+      } else {
+        setReceivedIndices(prev => {
+          const next = new Set(prev);
+          next.add(chunkIndex);
+          return next;
+        });
       }
 
       // ── Chunk 0: parse JSON metadata ──────────────────────────────────────
@@ -276,6 +253,7 @@ export default function useReceiver() {
     fileNameRef.current  = "zero-wire-file";
     mimeTypeRef.current  = "application/octet-stream";
     setReceived(0);
+    setReceivedIndices(new Set());
     setTotal(0);
     setStatus("idle");
   }, [stop]);
@@ -288,6 +266,7 @@ export default function useReceiver() {
     reset,
     status,
     receivedCount,
+    receivedIndices,
     totalChunks,
     facingMode,
   };

@@ -20,6 +20,7 @@ export default function Receive() {
     reset,
     status,
     receivedCount,
+    receivedIndices,
     totalChunks,
     facingMode,
   } = useReceiver();
@@ -142,7 +143,7 @@ export default function Receive() {
               {/* Status grid — shows received chunk slots */}
               <div className="flex flex-wrap gap-[2px] mt-1">
                 {Array.from({ length: Math.min(totalChunks, 80) }).map((_, i) => {
-                  const received = i < receivedCount;
+                  const received = receivedIndices ? receivedIndices.has(i) : i < receivedCount;
                   return (
                     <div
                       key={i}
