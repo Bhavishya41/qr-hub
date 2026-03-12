@@ -6,7 +6,7 @@ import QRCode from "qrcode";
 const CHUNK_SIZE = 1536;          // payload bytes (smaller → safer QR capacity after latin-1)
 const HEADER_SIZE = 7;            // FileID(2) + ChunkIndex(2) + TotalChunks(2) + Checksum(1)
 const QR_CANVAS_SIZE = 300;
-const TARGET_FPS = 12;
+const TARGET_FPS = 18;
 const FRAME_INTERVAL_MS = 1000 / TARGET_FPS;
 
 // ─── Utility: build one chunk buffer ─────────────────────────────────────────
@@ -57,40 +57,6 @@ async function renderQRToCanvas(chunkBytes) {
   return offscreen;
 }
 
-// ─── White blank canvas (for padding the last RGB frame) ─────────────────────
-function createBlankCanvas() {
-  const c = document.createElement("canvas");
-  c.width = QR_CANVAS_SIZE;
-  c.height = QR_CANVAS_SIZE;
-  const ctx = c.getContext("2d");
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, QR_CANVAS_SIZE, QR_CANVAS_SIZE);
-  return c;
-}
-
-// ─── Merge 3 B&W QR canvases → one RGB canvas ────────────────────────────────
-function mergeRGBChannels(qr1, qr2, qr3, output) {
-  const w = QR_CANVAS_SIZE;
-  const h = QR_CANVAS_SIZE;
-
-  const d1 = qr1.getContext("2d").getImageData(0, 0, w, h).data;
-  const d2 = qr2.getContext("2d").getImageData(0, 0, w, h).data;
-  const d3 = qr3.getContext("2d").getImageData(0, 0, w, h).data;
-
-  const outCtx = output.getContext("2d");
-  const out = outCtx.createImageData(w, h);
-  const od = out.data;
-
-  for (let i = 0; i < w * h; i++) {
-    const p = i * 4;
-    od[p + 0] = d1[p] < 128 ? 0 : 255;   // R ← QR1
-    od[p + 1] = d2[p] < 128 ? 0 : 255;   // G ← QR2
-    od[p + 2] = d3[p] < 128 ? 0 : 255;   // B ← QR3
-    od[p + 3] = 255;
-  }
-
-  outCtx.putImageData(out, 0, 0);
-}
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 export default function useSender() {
@@ -125,12 +91,13 @@ export default function useSender() {
 
     if (timestamp - lastFrameTimeRef.current >= FRAME_INTERVAL_MS) {
       const idx = frameIndexRef.current;
-      const [qr1, qr2, qr3] = frames[idx];
+      const qrCanvas = frames[idx];
 
       if (canvas.width !== QR_CANVAS_SIZE) canvas.width = QR_CANVAS_SIZE;
       if (canvas.height !== QR_CANVAS_SIZE) canvas.height = QR_CANVAS_SIZE;
 
-      mergeRGBChannels(qr1, qr2, qr3, canvas);
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(qrCanvas, 0, 0);
 
       const nextIdx = idx + 1;
       lastFrameTimeRef.current = timestamp;
@@ -234,28 +201,19 @@ export default function useSender() {
       ),
     ];
 
-    // Pad to multiple of 3
-    const padCount = (3 - (chunks.length % 3)) % 3;
-    const padChunk = buildChunk(fileId, 0xffff, totalChunks, new Uint8Array(0));
-    for (let i = 0; i < padCount; i++) chunks.push(padChunk);
+    const totalFrames = chunks.length;
+    const bwFrames = [];
 
-    const totalRGBFrames = chunks.length / 3;
-    const rgbFrames = [];
-
-    for (let f = 0; f < totalRGBFrames; f++) {
-      const [qr1, qr2, qr3] = await Promise.all([
-        renderQRToCanvas(chunks[f * 3 + 0]),
-        renderQRToCanvas(chunks[f * 3 + 1]),
-        renderQRToCanvas(chunks[f * 3 + 2]),
-      ]);
-      rgbFrames.push([qr1, qr2, qr3]);
-      setProgress(Math.round(((f + 1) / totalRGBFrames) * 100));
-      // Yield to browser each batch to keep UI responsive
-      await new Promise((r) => setTimeout(r, 0));
+    for (let f = 0; f < totalFrames; f++) {
+      const qr = await renderQRToCanvas(chunks[f]);
+      bwFrames.push(qr);
+      setProgress(Math.round(((f + 1) / totalFrames) * 100));
+      // Yield to browser periodically
+      if (f % 5 === 0) await new Promise((r) => setTimeout(r, 0));
     }
 
-    framesRef.current = rgbFrames;
-    setFrameCount(totalRGBFrames);
+    framesRef.current = bwFrames;
+    setFrameCount(totalFrames);
     setIsEncoding(false);
     setProgress(100);
 
