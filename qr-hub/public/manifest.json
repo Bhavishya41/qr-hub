@@ -1,0 +1,17 @@
+{
+  "name": "Zero Wire",
+  "short_name": "Zero Wire",
+  "description": "Offline file transfer. No internet. Just light.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FDFD96",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
