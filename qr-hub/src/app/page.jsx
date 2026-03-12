@@ -1,6 +1,44 @@
+"use client";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 
 export default function Home() {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+
+  useEffect(() => {
+    // Check if the app is already installed
+    if (window.matchMedia("(display-mode: standalone)").matches) {
+      setIsInstalled(true);
+    }
+
+    const handler = (e) => {
+      // Prevent the mini-infobar from appearing on mobile
+      e.preventDefault();
+      // Stash the event so it can be triggered later.
+      setDeferredPrompt(e);
+    };
+
+    window.addEventListener("beforeinstallprompt", handler);
+
+    window.addEventListener("appinstalled", () => {
+      setIsInstalled(true);
+      setDeferredPrompt(null);
+    });
+
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    // Show the install prompt
+    deferredPrompt.prompt();
+    // Wait for the user to respond to the prompt
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === "accepted") {
+      setDeferredPrompt(null);
+    }
+  };
   return (
     <div className="min-h-screen flex flex-col justify-center items-center bg-[var(--bg)] p-4 relative">
       <div className="absolute top-0 left-4 font-[family-name:var(--font-bebas-neue)] text-[18px] tracking-widest h-10 w-40 text-[#000]">
@@ -29,6 +67,15 @@ export default function Home() {
             RECEIVE
           </Link>
         </div>
+
+        {deferredPrompt && !isInstalled && (
+          <button
+            onClick={handleInstallClick}
+            className="brutal-btn w-full min-h-[56px] bg-black text-white font-[family-name:var(--font-bebas-neue)] text-2xl tracking-widest uppercase mt-4"
+          >
+            ADD TO HOME SCREEN
+          </button>
+        )}
       </div>
       
       <div className="absolute bottom-4 text-center font-[family-name:var(--font-space-mono)] text-[11px] font-bold text-black uppercase w-full left-0">
